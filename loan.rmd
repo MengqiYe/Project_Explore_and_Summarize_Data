@@ -1,0 +1,199 @@
+# Loans Exploration by Mengqi Ye
+
+## Loan Data from Prosper
+This [data](https://s3.amazonaws.com/udacity-hosted-downloads/ud651/prosperLoanData.csv) set contains 113,937 loans with 81 variables on each loan, including loan amount, borrower rate (or interest rate), current loan status, borrower income, borrower employment status, borrower credit history, and the latest payment information.
+
+## Load Modules
+```{r echo=FALSE, message=FALSE}
+library(ggplot2)
+library(gridExtra)
+library(plyr)
+library(alr3)
+library(tidyr)
+library(dplyr )
+library(reshape)
+library(lubridate )
+library(reshape2)
+library(GGally)
+library(car)
+library(MASS)
+library(scales)
+library(memisc)
+library('RCurl')
+library(bitops)
+```
+## Load Data
+It takes a while to load data, for a total of 113937 records with 81 variables.
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+loans <- read.csv("prosperLoanData.csv")
+loans_orig <- loans
+h <- head(loans)
+```
+
+## Data Wrangling
+Ratings are reorganized so, that the grades are ordered from AA (low risk) to HR (high risk). The levels of `LoanStatus` are also reorganized so that the order is more meaningful (but still subjective) for further analyses. The variables `IncomeVerifiable`, `IsBorrowerHomeowner` and `CurrentlyInGroup` are converted to a logical variables.
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+loans$ProsperRating..Alpha. <- factor(loans$ProsperRating..Alpha., 
+                                      c("HR", "E", "D", "C", "B", "A", "AA"))
+loans$CreditGrade <- factor(loans$CreditGrade, 
+                            c("NC", "HR", "E", "D", "C", "B", "A", "AA"))
+loans$LoanStatus <- factor(loans$LoanStatus, 
+                           levels=c("Completed", 
+                                    "Current", 
+                                    "Chargedoff", 
+                                    "Defaulted",  
+                                    "FinalPaymentInProgress", 
+                                    "Past Due (>120 days)", 
+                                    "Past Due (1-15 days)", 
+                                    "Past Due (16-30 days)", 
+                                    "Past Due (31-60 days)", 
+                                    "Past Due (61-90 days)", 
+                                    "Past Due (91-120 days)",
+                                    "Cancelled"))
+loans$IncomeVerifiable <- as.logical(loans$IncomeVerifiable)
+loans$IsBorrowerHomeowner <- as.logical(loans$IsBorrowerHomeowner)
+loans$CurrentlyInGroup <- as.logical(loans$CurrentlyInGroup)
+
+```
+
+BorrowerState : Most loans in CA, least in ND.
+```{r}
+sort(table(loans$BorrowerState))
+```
+
+## APR 
+In this analysis I will try to find variables in the data set that drive annual percentage rate of a loan. Therefore I will concentrate on data collected before the authorization of a loan.
+### APR by ListingCategory
+```{r}
+ggplot(data = loans, aes(x=BorrowerState , y=BorrowerAPR)) + 
+  geom_point(stat="summary", 
+             fun.y="median",
+             color="orange")
+```
+
+
+### APR by ListingCategory
+0 - Not Available, 1 - Debt Consolidation, 2 - Home Improvement, 3 - Business, 4 - Personal Loan, 5 - Student Use, 6 - Auto, 7- Other, 8 - Baby&Adoption, 9 - Boat, 10 - Cosmetic Procedure, 11 - Engagement Ring, 12 - Green Loans, 13 - Household Expenses, 14 - Large Purchases, 15 - Medical/Dental, 16 - Motorcycle, 17 - RV, 18 - Taxes, 19 - Vacation, 20 - Wedding Loans
+APR is high for 10 - Cosmetic Procedure - 0.275
+APR is lowest for 4 - Personal Loan
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data = loans, 
+       aes(x = loans$ListingCategory, y = BorrowerAPR)) +
+  geom_point(
+    stat = "summary",
+    fun.y = "median",
+    color="orange"
+    ) +
+  ylab(" Mean Borrower APR") + 
+  xlab (" Loan Category") +
+  geom_smooth()
+```
+
+
+### APR by Employement duration
+Usually, those who just got in field of employments, are more likely to apply for a loan. And they have a variety of APR. So there is no obvious correlation between APR and Employement duration.
+But if you think on the horizontal line gradient, it reflects on how people pay off their debts. And there are some faint points suggest that some worked for over 60 years, still haven't pay off loans, makes you wonder how much they borrowed in the first place.
+
+```{r}
+loans$EmploymentStatusDurationInYears <- loans$EmploymentStatusDuration / 12
+histogram(loans$EmploymentStatusDurationInYears,
+          xlab="Year")
+
+ggplot(aes(x = EmploymentStatusDurationInYears, y = BorrowerAPR), data = loans)+
+  geom_point(alpha=1/30, color="orange")+
+  xlim(0,70)+ylim(0,0.45)+
+  xlab("Year")+ylab("APR")
+
+ggplot(data = loans, aes(x= loans$EmploymentStatusDurationInYears, y=BorrowerAPR)) + 
+  geom_point(stat="summary", 
+             fun.y="median", 
+             alpha=1/5,
+             color="orange") + 
+  ylab(" Mean Borrower APR") + xlab ("Employement duration") +
+  geom_smooth()
+
+```
+
+
+
+### APR by IncomeRange
+There is no surprise that people borrow money base on their income. And the highest APR fall on unemployed people.
+```{r}
+loans$IncomeRange <- factor(loans$IncomeRange, 
+                            levels = c("Not displayed","$0","Not employed", 
+                                       "$1-24,999","$25,000-49,999",
+                                       "$50,000-74,999","$75,000-99,999",
+                                       "$100,000+") )
+
+histogram(loans$IncomeRange,
+          type="count",
+          xlab="Income Range",
+          )
+ggplot(data = loans, aes(x= loans$IncomeRange, y=BorrowerAPR)) + 
+  geom_point(stat="summary", fun.y="median") + 
+  ylab(" Mean Borrower APR") + xlab ("Income Range") 
+
+```
+
+### APR by ProsperScore
+It only makes sense that higher prosper score leads to lower APR.
+```{r}
+ggplot(data = loans, aes(x= loans$ProsperScore, y=BorrowerAPR)) + 
+  geom_histogram(stat="summary", fun.y="median") + 
+  ylab(" Mean Borrower APR") + xlab ("Prosper Score") +
+  geom_smooth()
+```
+
+#### APR by AmountDelinquent
+Some people manage to have a low APR even though they're deeply in debts, however, generally speaking, those who never have delinquent behaviours enjoys a lower APR.
+```{r}
+loans$AmountDelinquent_BOOL <- loans$AmountDelinquent >0
+
+ggplot(data = loans[loans$AmountDelinquent>1 & loans$AmountDelinquent< 100000,], aes(x= AmountDelinquent, y=BorrowerAPR)) + 
+  geom_point(stat="summary", fun.y="median",
+             color="orange",alpha=0.1) + 
+  ylab("Amount Delinquent") + xlab ("APR")
+
+ggplot(data = loans, aes(x= AmountDelinquent_BOOL, y=BorrowerAPR)) + 
+  geom_histogram(stat="summary", fun.y="median") + 
+  ylab(" Mean Borrower APR") + xlab ("Delinquent Status") 
+```
+## Final Plots
+```{r}
+ggplot(data = loans, 
+       aes(x = loans$ListingCategory, y = BorrowerAPR)) +
+  geom_point(
+    stat = "summary",
+    fun.y = "median",
+    color="orange"
+    ) +
+  ylab(" Mean Borrower APR") + 
+  xlab (" Loan Category") +
+  geom_smooth()
+
+ggplot(data = loans, aes(x= loans$ProsperScore, y=BorrowerAPR)) + 
+  geom_histogram(stat="summary", fun.y="median") + 
+  ylab(" Mean Borrower APR") + xlab ("Prosper Score") +
+  geom_smooth()
+
+ggplot(data = loans, aes(x= AmountDelinquent_BOOL, y=BorrowerAPR)) + 
+  geom_histogram(stat="summary", fun.y="median") + 
+  ylab(" Mean Borrower APR") + xlab ("Delinquent Status") 
+```
+
+## Reflection Section
+```{r}
+m1 <- lm(loans$BorrowerAPR ~ loans$ListingCategory)
+m2 <- update (m1, ~ . + loans$EmploymentStatusDuration)
+m3 <- update (m2, ~ . + loans$IncomeRange)
+m4 <- update (m3, ~ . + loans$ProsperScore)
+m5 <- update (m4, ~ . + loans$AmountDelinquent)
+
+mtable(m1,m2,m3,m4,m5)
+```
+
+
+The observed APR correlated in the data set, are ListingCategory,IncomeRange,ProsperScore,AmountDelinquent.
+In this analyses is shown, that it is possible to fit a simple logistic model to data to predict APR of loans. 
+
+To improve the model one could also try to use more sophisticated models like boosted decision trees, neural nets or support vector machines, for simple logistic models lacks cross-effects between variables.
