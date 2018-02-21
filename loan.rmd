@@ -1,6 +1,6 @@
 # Loans Exploration by Mengqi Ye
 
-## Loan Data from Prosper
+# Loan Data from Prosper
 This [data](https://s3.amazonaws.com/udacity-hosted-downloads/ud651/prosperLoanData.csv) set contains 113,937 loans with 81 variables on each loan, including loan amount, borrower rate (or interest rate), current loan status, borrower income, borrower employment status, borrower credit history, and the latest payment information.
 
 ## Load Modules
@@ -30,13 +30,47 @@ loans_orig <- loans
 h <- head(loans)
 ```
 
-## Data Wrangling
-Ratings are reorganized so, that the grades are ordered from AA (low risk) to HR (high risk). The levels of `LoanStatus` are also reorganized so that the order is more meaningful (but still subjective) for further analyses. The variables `IncomeVerifiable`, `IsBorrowerHomeowner` and `CurrentlyInGroup` are converted to a logical variables.
+# Data Wrangling
+## Helper Functions
+```{r echo=FALSE, message=FALSE, warning=FALSE, helperFunctions}
+find_na_cols <- function(df) {
+  missing_vals <- sapply(df, function(x) sum(is.na(x)))
+  missing_vals <- data.frame(ColumnName=names(missing_vals), 
+                             NumberMissingValues=missing_vals, row.names = c())
+  subset(missing_vals, NumberMissingValues>0)
+}
+
+na_against_date <- function(fieldname) {
+  ggplot(aes_string("year(LoanOriginationDate)",
+                    fill= paste("is.na(", fieldname,")")), data=loans) +
+  geom_histogram(binwidth = 1) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  ggtitle(paste("Dates with missing",fieldname)) +
+  xlab("Year of loan origination") +
+  scale_x_continuous(breaks=seq(2002,2015,1))
+}
+```
+
+## Factors to Dates
+Dates are imported as factors, and I converted them to numeric dates, for comparison reason.
+```{r echo=FALSE, message=FALSE}
+loans$ListingCreationDate <- as.Date(loans$ListingCreationDate)
+loans$ClosedDate <- as.Date(loans$ClosedDate)
+loans$DateCreditPulled <- as.Date(loans$DateCreditPulled)
+loans$FirstRecordedCreditLine <- as.Date(loans$FirstRecordedCreditLine)
+loans$LoanOriginationDate <- as.Date(loans$LoanOriginationDate)
+str(loans)
+```
+
+## Reorganize columns
+Reorganize `ProsperRating..Alpha.` in following order, "AA", "A", "B", "C", "D", "E", "HR". "AA" means low risk, and "HR" means high risk.
+Reorganize `LoanStatus`, so that the order is more meaningful (but still subjective) for further analyses. 
+The variables `IncomeVerifiable`, `IsBorrowerHomeowner` and `CurrentlyInGroup` are converted to a logical variables.
 ```{r echo=FALSE, message=FALSE, warning=FALSE}
 loans$ProsperRating..Alpha. <- factor(loans$ProsperRating..Alpha., 
-                                      c("HR", "E", "D", "C", "B", "A", "AA"))
+                                      c("AA", "A", "B", "C", "D", "E", "HR"))
 loans$CreditGrade <- factor(loans$CreditGrade, 
-                            c("NC", "HR", "E", "D", "C", "B", "A", "AA"))
+                            c("AA", "A", "B", "C", "D", "E", "HR", "NC"))
 loans$LoanStatus <- factor(loans$LoanStatus, 
                            levels=c("Completed", 
                                     "Current", 
@@ -53,48 +87,125 @@ loans$LoanStatus <- factor(loans$LoanStatus,
 loans$IncomeVerifiable <- as.logical(loans$IncomeVerifiable)
 loans$IsBorrowerHomeowner <- as.logical(loans$IsBorrowerHomeowner)
 loans$CurrentlyInGroup <- as.logical(loans$CurrentlyInGroup)
-
 ```
+
 
 BorrowerState : Most loans in CA, least in ND.
 ```{r}
 sort(table(loans$BorrowerState))
 ```
 
-## APR 
-In this analysis I will try to find variables in the data set that drive annual percentage rate of a loan. Therefore I will concentrate on data collected before the authorization of a loan.
-### APR by ListingCategory
-```{r}
-ggplot(data = loans, aes(x=BorrowerState , y=BorrowerAPR)) + 
-  geom_point(stat="summary", 
-             fun.y="median",
-             color="orange")
+
+# Univariate Plots Section
+## Detecting Outliers
+
+The following columns include missing values.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+find_na_cols(loans)
 ```
 
+`ClosedDate` is often missing, because loans are not yet closed, when the data was collected.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(aes(LoanStatus), data=subset(loans, is.na(ClosedDate))) +
+  geom_bar(fill="#4169e1") +
+  theme(axis.text.x = element_text(angle = 90)) +
+  ggtitle("Loan status for loans with missing closed date")
+```
+It's interesting to see, how data grow robust through time.
+
+Variables like `EmploymentStatusDuration`, `CreditScoreRangeLower`, `FirstRecordedCreditLine`, `CurrentCreditLines`, `TotalInquiries`, `AmountDelinquent`, `FirstRecordedCreditLine`, `BankcardUtilization`  are missing for loans before 2008.
+
+So I wonder how many date related entries were missing in the dataset, compare to the whole data amount.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+na_against_date("EmploymentStatusDuration")
+na_against_date("CreditScoreRangeLower")
+na_against_date("FirstRecordedCreditLine")
+na_against_date("CurrentCreditLines")
+na_against_date("TotalInquiries")
+na_against_date("AmountDelinquent")
+na_against_date("FirstRecordedCreditLine")
+na_against_date("BankcardUtilization")
+```
+
+`TotalProsperLoans` is missing for loans where the borrower does not have previous Prosper loans.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+na_against_date("TotalProsperLoans")
+```
+
+To obtain a clean subset of data, entries with missing values for `EmploymentStatusDuration`, `ClosedDate`, `FirstRecordedCreditLine` and `BankcardUtilization` are removed.
+
+## Clean data
+
+Remove entries with missing dates, and remove bad loans that are cancelled.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+loans_clean <- subset(loans, 
+                      !is.na(EmploymentStatusDuration) &
+                        !is.na(ClosedDate) & 
+                        !is.na(FirstRecordedCreditLine) &
+                        !is.na(BankcardUtilization))
+
+loans_clean_finished <- subset(loans_clean, LoanStatus!="Cancelled")
+```
+
+# Univariate Analysis
+
+APR is high for 10 - Cosmetic Procedure - 0.275
+APR is lowest for 4 - Personal Loan
+
+# Bivariate Plots Section
+
+People with low income apply for loans more often, and people with relatively higher income gets larger amount of loan.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+loans$StatedMonthlyIncome.bucket = cut(loans$StatedMonthlyIncome,
+                            c( 0, 3000, 5000, 8000, 12000))
+
+ggplot(aes(x = StatedMonthlyIncome.bucket,
+           y = LoanOriginalAmount), 
+           data = subset(loans, (StatedMonthlyIncome < 12000) & 
+                      (EmploymentStatus != ""))) + 
+   geom_boxplot(aes(fill = EmploymentStatus) ) +
+   theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+## APR 
+In this analysis I will try to find variables in the data set that drive annual percentage rate of a loan. Therefore I will concentrate on data collected before the authorization of a loan.
 
 ### APR by ListingCategory
 0 - Not Available, 1 - Debt Consolidation, 2 - Home Improvement, 3 - Business, 4 - Personal Loan, 5 - Student Use, 6 - Auto, 7- Other, 8 - Baby&Adoption, 9 - Boat, 10 - Cosmetic Procedure, 11 - Engagement Ring, 12 - Green Loans, 13 - Household Expenses, 14 - Large Purchases, 15 - Medical/Dental, 16 - Motorcycle, 17 - RV, 18 - Taxes, 19 - Vacation, 20 - Wedding Loans
-APR is high for 10 - Cosmetic Procedure - 0.275
-APR is lowest for 4 - Personal Loan
-```{r echo=FALSE, message=FALSE, warning=FALSE}
-ggplot(data = loans, 
-       aes(x = loans$ListingCategory, y = BorrowerAPR)) +
-  geom_point(
-    stat = "summary",
-    fun.y = "median",
-    color="orange"
-    ) +
-  ylab(" Mean Borrower APR") + 
-  xlab (" Loan Category") +
-  geom_smooth()
-```
 
+Most loans are for 1 - Debt Consolidation.
+APR is high for 10 - Cosmetic Procedure - 0.275.
+APR is lowest for 4 - Personal Loan.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+grid.arrange( ggplot(aes(x=loans$ListingCategory), 
+        data = loans) +
+  geom_histogram( bins = 20) ,
+   ggplot(aes(x=1, y=BorrowerAPR), 
+        data = loans) +
+  geom_boxplot()  , nrow =1)
+
+ggplot(aes(x = loans$ListingCategory, y = BorrowerAPR), data = loans) +
+  geom_jitter( alpha = .01)  + 
+  stat_summary(fun.y = "mean", 
+               geom = "point", 
+               color = "magenta", 
+               shape = 8, 
+               size = 4) +  
+  xlab ("Listing Category") + ylab(" Mean Borrower APR")
+```
 
 ### APR by Employement duration
 Usually, those who just got in field of employments, are more likely to apply for a loan. And they have a variety of APR. So there is no obvious correlation between APR and Employement duration.
 But if you think on the horizontal line gradient, it reflects on how people pay off their debts. And there are some faint points suggest that some worked for over 60 years, still haven't pay off loans, makes you wonder how much they borrowed in the first place.
 
-```{r}
+```{r echo=FALSE, message=FALSE, warning=FALSE}
 loans$EmploymentStatusDurationInYears <- loans$EmploymentStatusDuration / 12
 histogram(loans$EmploymentStatusDurationInYears,
           xlab="Year")
@@ -118,26 +229,35 @@ ggplot(data = loans, aes(x= loans$EmploymentStatusDurationInYears, y=BorrowerAPR
 
 ### APR by IncomeRange
 There is no surprise that people borrow money base on their income. And the highest APR fall on unemployed people.
-```{r}
+```{r echo=FALSE, message=FALSE, warning=FALSE}
 loans$IncomeRange <- factor(loans$IncomeRange, 
                             levels = c("Not displayed","$0","Not employed", 
                                        "$1-24,999","$25,000-49,999",
                                        "$50,000-74,999","$75,000-99,999",
                                        "$100,000+") )
 
-histogram(loans$IncomeRange,
-          type="count",
-          xlab="Income Range",
-          )
-ggplot(data = loans, aes(x= loans$IncomeRange, y=BorrowerAPR)) + 
-  geom_point(stat="summary", fun.y="median") + 
-  ylab(" Mean Borrower APR") + xlab ("Income Range") 
+ggplot(data = loans, aes(x = loans$IncomeRange, y = BorrowerAPR)) + 
+  geom_point(stat="summary", fun.y = "sum") +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  xlab("Income Range")
 
+ggplot(data = loans, aes(x= loans$IncomeRange, y=BorrowerAPR)) + 
+  geom_jitter( alpha = .01)  + 
+  geom_boxplot( alpha = .5,color = 'orange') + 
+  stat_summary(fun.y = "mean", 
+               geom = "point", 
+               color = "magenta", 
+               shape = 8, 
+               size = 4) +  
+  ylab(" Mean Borrower APR") + xlab ("Income Range") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  geom_smooth()
 ```
 
 ### APR by ProsperScore
 It only makes sense that higher prosper score leads to lower APR.
-```{r}
+```{r echo=FALSE, message=FALSE, warning=FALSE}
 ggplot(data = loans, aes(x= loans$ProsperScore, y=BorrowerAPR)) + 
   geom_histogram(stat="summary", fun.y="median") + 
   ylab(" Mean Borrower APR") + xlab ("Prosper Score") +
@@ -146,52 +266,140 @@ ggplot(data = loans, aes(x= loans$ProsperScore, y=BorrowerAPR)) +
 
 #### APR by AmountDelinquent
 Some people manage to have a low APR even though they're deeply in debts, however, generally speaking, those who never have delinquent behaviours enjoys a lower APR.
-```{r}
+```{r echo=FALSE, message=FALSE, warning=FALSE}
 loans$AmountDelinquent_BOOL <- loans$AmountDelinquent >0
 
 ggplot(data = loans[loans$AmountDelinquent>1 & loans$AmountDelinquent< 100000,], aes(x= AmountDelinquent, y=BorrowerAPR)) + 
   geom_point(stat="summary", fun.y="median",
-             color="orange",alpha=0.1) + 
-  ylab("Amount Delinquent") + xlab ("APR")
+             color="orange",alpha=0.1)
 
 ggplot(data = loans, aes(x= AmountDelinquent_BOOL, y=BorrowerAPR)) + 
-  geom_histogram(stat="summary", fun.y="median") + 
+  geom_jitter( alpha = .01)  + 
+  geom_boxplot( alpha = .5,color = 'orange') + 
+  stat_summary(fun.y = "mean", 
+               geom = "point", 
+               color = "magenta", 
+               shape = 8, 
+               size = 4) +  
   ylab(" Mean Borrower APR") + xlab ("Delinquent Status") 
 ```
-## Final Plots
-```{r}
-ggplot(data = loans, 
-       aes(x = loans$ListingCategory, y = BorrowerAPR)) +
-  geom_point(
-    stat = "summary",
-    fun.y = "median",
-    color="orange"
-    ) +
-  ylab(" Mean Borrower APR") + 
-  xlab (" Loan Category") +
-  geom_smooth()
 
-ggplot(data = loans, aes(x= loans$ProsperScore, y=BorrowerAPR)) + 
-  geom_histogram(stat="summary", fun.y="median") + 
-  ylab(" Mean Borrower APR") + xlab ("Prosper Score") +
+## Delinquencies related features
+
+Delinquencies related features are `AmountDelinquent`, `CurrentDelinquencies`.
+Most of the loans have zero amount delinquent, but when delinquencies do happen, how much money are we talking about?
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data=subset(loans, AmountDelinquent>0), 
+       aes(x=LoanStatus, y=AmountDelinquent, fill=LoanStatus)) +
+  geom_boxplot() +
+  scale_y_continuous(limits=c(0,100)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  ggtitle("Amount delinquent")
+loans %>% group_by(LoanStatus) %>% 
+  summarise(mean=mean(AmountDelinquent), 
+            Percent_Zero_Amount=sum(AmountDelinquent==0)/n())
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data=subset(loans, EmploymentStatusDurationInYears>0), 
+       aes(x=LoanStatus, y=EmploymentStatusDurationInYears, fill=LoanStatus)) +
+  geom_boxplot() +
+  scale_y_continuous(limits=c(0,50)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  ggtitle("Employment Status Duration In Years")
+```
+
+The median number of current delinquencies is higher for charged off and defaulted loans.
+
+# Bivariate Analysis
+
+
+
+# Multivariate Plots Section
+
+Plot `BorrowerAPR` against `LoanOriginalAmount` on loans lessor than 25000 and use linear regression on `EmploymentStatus`
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(aes(x = LoanOriginalAmount, 
+           y = BorrowerAPR  , color =  EmploymentStatus), 
+        data=subset(loans_clean, (StatedMonthlyIncome < 25000) & 
+                      (EmploymentStatus != ""))) +
+      geom_point(alpha = 0.1, size = 2) +
+      geom_smooth(method = "lm", se = FALSE,size=2) +
+  scale_x_continuous(limits=c(0,25000)) +
+  scale_color_brewer(type='seq',
+                   guide=guide_legend(title='EmploymentStatus'))
+```
+
+# Multivariate Analysis
+
+Generally speaking, the more you borrow, the lessor APR is. On condition of the same amount of a loan, people with jobs get lower APR.
+
+## Final Plots
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(aes(x = loans$ListingCategory, y = BorrowerAPR), data = loans) +
+  geom_jitter( alpha = .01)  + 
+  stat_summary(fun.y = "mean", 
+               geom = "point", 
+               color = "magenta", 
+               shape = 8, 
+               size = 4) +  
+  xlab ("Listing Category") + ylab(" Mean Borrower APR")
+
+ggplot(data = loans, aes(x= loans$IncomeRange, y=BorrowerAPR)) + 
+  geom_jitter( alpha = .01)  + 
+  geom_boxplot( alpha = .5,color = 'orange') + 
+  stat_summary(fun.y = "mean", 
+               geom = "point", 
+               color = "magenta", 
+               shape = 8, 
+               size = 4) +  
+  ylab(" Mean Borrower APR") + xlab ("Income Range") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
   geom_smooth()
 
 ggplot(data = loans, aes(x= AmountDelinquent_BOOL, y=BorrowerAPR)) + 
-  geom_histogram(stat="summary", fun.y="median") + 
+  geom_jitter( alpha = .01)  + 
+  geom_boxplot( alpha = .5,color = 'orange') + 
+  stat_summary(fun.y = "mean", 
+               geom = "point", 
+               color = "magenta", 
+               shape = 8, 
+               size = 4) +  
   ylab(" Mean Borrower APR") + xlab ("Delinquent Status") 
+
+loans$StatedMonthlyIncome.bucket = cut(loans$StatedMonthlyIncome,
+                            c( 0, 3000, 5000, 8000, 12000))
+
+ggplot(aes(x = StatedMonthlyIncome.bucket,
+           y = LoanOriginalAmount), 
+           data=subset(loans, (StatedMonthlyIncome < 12000) & 
+                      (EmploymentStatus != ""))) + 
+   geom_boxplot(aes(fill = EmploymentStatus) )   +
+   theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+ggplot(aes(x = LoanOriginalAmount, 
+           y = BorrowerAPR, color = EmploymentStatus), 
+        data=subset(loans, (LoanOriginalAmount < 25000) & 
+                      (EmploymentStatus != ""))) +
+      geom_point(alpha = 0.1, size = 2) +
+      geom_smooth(method = "lm", se = FALSE,size=2)  +
+  scale_x_continuous(limits=c(0,25000)) +
+  scale_color_brewer(type='seq',
+                   guide=guide_legend(title='EmploymentStatus'))
 ```
 
 ## Reflection Section
-```{r}
-m1 <- lm(loans$BorrowerAPR ~ loans$ListingCategory)
-m2 <- update (m1, ~ . + loans$EmploymentStatusDuration)
-m3 <- update (m2, ~ . + loans$IncomeRange)
-m4 <- update (m3, ~ . + loans$ProsperScore)
-m5 <- update (m4, ~ . + loans$AmountDelinquent)
-
-mtable(m1,m2,m3,m4,m5)
+Fit a linear model, predicting `BorrowerAPR` against variables of `AmountDelinquent`, `IncomeRange`, `LoanOriginalAmount`.
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+m1 <- lm(loans_clean_finished$BorrowerAPR ~ loans_clean_finished$AmountDelinquent)
+m2 <- update (m1, ~ . + loans_clean_finished$IncomeRange)
+m3 <- update (m2, ~ . + loans_clean_finished$LoanOriginalAmount)
+mtable(m1,m2,m3)
 ```
-
+After learning the meaning of each column in the dataset from [document](https://docs.google.com/spreadsheets/d/1gDyi_L4UvIrLTEC6Wri5nbaMmkGmLQBk-Yx3z0XDEtI/edit#gid=0)
+I think factors like `AmountDelinquent`, `IncomeRange`, `LoanOriginalAmount` may have an impact on APR
 
 The observed APR correlated in the data set, are ListingCategory,IncomeRange,ProsperScore,AmountDelinquent.
 In this analyses is shown, that it is possible to fit a simple logistic model to data to predict APR of loans. 
